@@ -44,7 +44,8 @@ def news(limit: int = 50, session: Session = Depends(get_session)) -> list[dict]
             "id": r.id,
             "title": r.title,
             "url": r.url,
-            "source": r.source,
+            "source": r.source.name,
+            "content": r.content,
             "published_at": r.published_at.isoformat() if r.published_at else None,
         }
         for r in records

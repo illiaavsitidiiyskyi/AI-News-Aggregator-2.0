@@ -9,11 +9,11 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 ├── app/
 │   ├── __init__.py
 │   ├── config.py          # Configuration (env-driven)
-│   ├── models.py          # NewsItem domain model
+│   ├── models.py          # NewsItem domain model, URL normalization + hashing
 │   ├── aggregator.py      # Fetch → dedupe → sort pipeline
 │   ├── api.py             # FastAPI app (GET /health, GET /news)
 │   ├── db.py              # SQLAlchemy engine/session/Base
-│   ├── db_models.py       # ORM models (news_items table)
+│   ├── db_models.py       # ORM models: Source, Article
 │   ├── storage.py         # Persistence: save/list items
 │   ├── main.py            # Entry point (run once or loop)
 │   └── sources/
@@ -93,8 +93,26 @@ docker compose up -d       # start PostgreSQL 16 on port 5432
 
 Tables are created automatically on first write (`init_db()`); for production use Alembic migrations instead.
 
-`app/storage.py` provides `save_items` (per-item insert, skips duplicate URLs) and
-`save_items_upsert` (single `INSERT ... ON CONFLICT (url) DO NOTHING`).
+`app/storage.py` provides `save_items` (per-item insert, resolves sources, skips duplicates by
+URL/hash) and `save_items_upsert` (single `INSERT ... ON CONFLICT (hash) DO NOTHING`).
+
+## Data model
+
+```
+sources                     articles
+----                        --------
+id          PK              id           PK
+name        unique          url          unique
+url                         title
+created_at                  content      (text)
+                            published_at nullable
+                            hash         sha256(normalized url), unique, indexed
+                            source_id    FK → sources.id
+                            created_at
+```
+
+Deduplication is based on `hash` — the sha256 of the normalized URL (lowercased scheme/host,
+fragment and trailing slash stripped), so cosmetic URL variants collapse into one article.
 
 ## Tests
 
