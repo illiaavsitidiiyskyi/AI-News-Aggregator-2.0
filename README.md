@@ -11,16 +11,24 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── config.py          # Configuration (env-driven)
 │   ├── models.py          # NewsItem domain model
 │   ├── aggregator.py      # Fetch → dedupe → sort pipeline
-│   ├── api.py             # FastAPI app (GET /health)
+│   ├── api.py             # FastAPI app (GET /health, GET /news)
+│   ├── db.py              # SQLAlchemy engine/session/Base
+│   ├── db_models.py       # ORM models (news_items table)
+│   ├── storage.py         # Persistence: save/list items
 │   ├── main.py            # Entry point (run once or loop)
 │   └── sources/
 │       ├── __init__.py
 │       ├── base.py        # NewsSource abstract base class
 │       └── rss.py         # RSS/Atom feed source
 ├── tests/
+│   ├── conftest.py        # SQLite-per-test fixture
 │   ├── test_aggregator.py
-│   └── test_config.py
+│   ├── test_api.py
+│   ├── test_config.py
+│   └── test_storage.py
+├── docker-compose.yml     # PostgreSQL 16 for local development
 ├── pyproject.toml
+├── .env.example
 ├── .gitignore
 └── README.md
 ```
@@ -59,7 +67,8 @@ news-aggregator-api
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/health` | Liveness probe → `{"status": "ok", "version": ..., "time": ...}` |
+| `GET` | `/health` | Liveness + DB connectivity probe |
+| `GET` | `/news` | Newest aggregated news items from the DB (`?limit=50`) |
 | `GET` | `/docs` | Interactive Swagger UI (auto-generated) |
 
 ## Configuration
@@ -71,6 +80,21 @@ Environment variables (or a `.env` file in the project root):
 | `REFRESH_INTERVAL_MINUTES` | `30` | Delay between runs in loop mode |
 | `MAX_ITEMS_PER_SOURCE` | `50` | Max items fetched per source |
 | `OUTPUT_FORMAT` | `json` | Output format (planned) |
+| `DATABASE_URL` | `postgresql+psycopg://aggregator:aggregator@127.0.0.1:5432/aggregator` | SQLAlchemy database URL |
+
+## Database
+
+PostgreSQL for local development (SQLAlchemy 2.0 + psycopg 3):
+
+```bash
+cp .env.example .env
+docker compose up -d       # start PostgreSQL 16 on port 5432
+```
+
+Tables are created automatically on first write (`init_db()`); for production use Alembic migrations instead.
+
+`app/storage.py` provides `save_items` (per-item insert, skips duplicate URLs) and
+`save_items_upsert` (single `INSERT ... ON CONFLICT (url) DO NOTHING`).
 
 ## Tests
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import timezone
 
 from app.config import Config
 from app.models import NewsItem

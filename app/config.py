@@ -19,13 +19,15 @@ class Config:
     refresh_interval_minutes: int = 30
     max_items_per_source: int = 50
     output_format: str = "json"
+    database_url: str = "postgresql+psycopg://aggregator:aggregator@127.0.0.1:5432/aggregator"
     data_dir: Path = field(default=DATA_DIR)
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls) -> Config:
         load_dotenv(PROJECT_ROOT / ".env")
         return cls(
             refresh_interval_minutes=int(os.getenv("REFRESH_INTERVAL_MINUTES", "30")),
             max_items_per_source=int(os.getenv("MAX_ITEMS_PER_SOURCE", "50")),
             output_format=os.getenv("OUTPUT_FORMAT", "json"),
+            database_url=os.getenv("DATABASE_URL", cls.database_url),
         )
