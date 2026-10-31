@@ -26,6 +26,8 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── test_api.py
 │   ├── test_config.py
 │   └── test_storage.py
+├── alembic/               # Migrations (versions/, env.py)
+├── alembic.ini
 ├── docker-compose.yml     # PostgreSQL 16 for local development
 ├── pyproject.toml
 ├── .env.example
@@ -89,9 +91,23 @@ PostgreSQL for local development (SQLAlchemy 2.0 + psycopg 3):
 ```bash
 cp .env.example .env
 docker compose up -d       # start PostgreSQL 16 on port 5432
+alembic upgrade head       # apply migrations
 ```
 
-Tables are created automatically on first write (`init_db()`); for production use Alembic migrations instead.
+### Migrations (Alembic)
+
+The schema is managed by Alembic; `env.py` reads `DATABASE_URL` from the app config
+(so `.env` works) and uses `app.db.Base.metadata` for autogeneration.
+
+```bash
+alembic revision --autogenerate -m "describe change"   # generate a migration
+alembic upgrade head                                   # apply
+alembic downgrade -1                                   # roll back one revision
+alembic current                                        # show current revision
+```
+
+For tests, tables are created directly from the models (`init_db()` in `tests/conftest.py`);
+Alembic is used for the dev/prod database.
 
 `app/storage.py` provides `save_items` (per-item insert, resolves sources, skips duplicates by
 URL/hash) and `save_items_upsert` (single `INSERT ... ON CONFLICT (hash) DO NOTHING`).
