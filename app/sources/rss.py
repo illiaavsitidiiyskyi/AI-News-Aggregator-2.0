@@ -26,9 +26,15 @@ class RssSource(NewsSource):
     def __init__(self, url: str, name: str | None = None) -> None:
         self.url = url
         self.name = name or url
+        self._name_from_feed = name is None
 
     def fetch(self, limit: int = 50) -> Iterable[NewsItem]:
         feed = feedparser.parse(self.url)
+        if self._name_from_feed:
+            # Prefer the feed's own title (human-readable) for storage/reporting.
+            feed_title = feed.feed.get("title")
+            if feed_title:
+                self.name = str(feed_title)
         for entry in feed.entries[:limit]:
             yield NewsItem(
                 title=entry.get("title", ""),

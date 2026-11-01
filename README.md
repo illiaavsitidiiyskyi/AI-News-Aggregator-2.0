@@ -61,12 +61,15 @@ news-aggregator
 
 ### Print articles from a single feed
 
-`app/rss_reader.py` is a standalone service that reads one RSS/Atom feed via `feedparser`
-and prints its articles to stdout:
+`app/rss_reader.py` is a standalone service that reads one RSS/Atom feed via `feedparser`,
+prints its articles to stdout and saves them to the database: the feed is registered in the
+`sources` table (name = feed title, url = feed URL), each article in `articles`
+(deduplicated by URL hash).
 
 ```bash
 python -m app.rss_reader                              # default Hugging Face blog feed
 python -m app.rss_reader <FEED_URL> --limit 10        # custom feed, at most 10 articles
+python -m app.rss_reader <FEED_URL> --no-save         # only print, do not touch the DB
 # or
 news-feed-reader <FEED_URL>
 ```
@@ -78,6 +81,8 @@ Example output:
    https://example.com/article
    2026-10-30 17:57
    Plain-text summary with HTML stripped.
+
+Saved 1 new article(s) to the database.
 ```
 
 ## API

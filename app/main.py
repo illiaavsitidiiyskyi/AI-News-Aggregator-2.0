@@ -7,7 +7,9 @@ import time
 
 from app.aggregator import Aggregator
 from app.config import Config
+from app.db import get_session_factory
 from app.sources.rss import RssSource
+from app.storage import save_items
 
 #: Default feeds; extend or replace via configuration later.
 DEFAULT_FEEDS = [
@@ -27,6 +29,17 @@ def build_aggregator(config: Config) -> Aggregator:
 def run_once(config: Config) -> None:
     items = build_aggregator(config).collect()
     logger.info("Collected %d unique news items", len(items))
+    session = get_session_factory()()
+    try:
+        saved = save_items(session, items)
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to save items to the database")
+        raise
+    finally:
+        session.close()
+    logger.info("Saved %d new articles", saved)
     for item in items[:10]:
         logger.info("  [%s] %s", item.source, item.title)
 
