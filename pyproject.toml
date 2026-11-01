@@ -30,6 +30,7 @@ dev = [
 [project.scripts]
 news-aggregator = "app.main:main"
 news-aggregator-api = "app.api:run"
+news-feed-reader = "app.rss_reader:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]

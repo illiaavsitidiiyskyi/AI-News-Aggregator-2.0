@@ -16,6 +16,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── db_models.py       # ORM models: Source, Article
 │   ├── storage.py         # Persistence: save/list items
 │   ├── main.py            # Entry point (run once or loop)
+│   ├── rss_reader.py      # Standalone service: read one feed, print articles
 │   └── sources/
 │       ├── __init__.py
 │       ├── base.py        # NewsSource abstract base class
@@ -25,6 +26,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── test_aggregator.py
 │   ├── test_api.py
 │   ├── test_config.py
+│   ├── test_rss_reader.py
 │   └── test_storage.py
 ├── alembic/               # Migrations (versions/, env.py)
 ├── alembic.ini
@@ -55,6 +57,27 @@ Or via the installed console script:
 
 ```bash
 news-aggregator
+```
+
+### Print articles from a single feed
+
+`app/rss_reader.py` is a standalone service that reads one RSS/Atom feed via `feedparser`
+and prints its articles to stdout:
+
+```bash
+python -m app.rss_reader                              # default Hugging Face blog feed
+python -m app.rss_reader <FEED_URL> --limit 10        # custom feed, at most 10 articles
+# or
+news-feed-reader <FEED_URL>
+```
+
+Example output:
+
+```
+1. Some article title
+   https://example.com/article
+   2026-10-30 17:57
+   Plain-text summary with HTML stripped.
 ```
 
 ## API
