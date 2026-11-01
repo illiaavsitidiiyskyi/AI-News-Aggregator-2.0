@@ -10,6 +10,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── __init__.py
 │   ├── config.py          # Configuration (env-driven)
 │   ├── models.py          # NewsItem domain model, URL normalization + hashing
+│   ├── normalization.py   # Date/encoding normalization, HTML → plain text
 │   ├── aggregator.py      # Fetch → dedupe → sort pipeline
 │   ├── api.py             # FastAPI app (GET /health, GET /news)
 │   ├── db.py              # SQLAlchemy engine/session/Base
@@ -27,6 +28,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── test_api.py
 │   ├── test_config.py
 │   ├── test_failure_handling.py
+│   ├── test_normalization.py
 │   ├── test_rss_reader.py
 │   └── test_storage.py
 ├── alembic/               # Migrations (versions/, env.py)
@@ -115,6 +117,20 @@ Environment variables (or a `.env` file in the project root):
 | `FEED_TIMEOUT_SECONDS` | `10` | Feed download timeout |
 | `FEED_RETRIES` | `3` | Total attempts per feed fetch (1 = no retries) |
 | `FEED_RETRY_BACKOFF_SECONDS` | `1.0` | Base delay for exponential backoff between retries |
+
+## Data normalization
+
+`app/normalization.py` cleans up data at the source boundary (`RssSource`) and again
+defensively on save (`app/storage.py`):
+
+- **Dates**: naive datetimes are treated as UTC, aware ones converted to UTC; sorting and
+  storage use a single normalized representation.
+- **Encodings**: feeds are decoded by feedparser per their XML declaration (UTF-8,
+  windows-1251, …); text fields additionally pass through byte decoding (lossy UTF-8),
+  Unicode NFC normalization, and stripping of zero-width/control characters.
+- **HTML**: descriptions are converted to plain text — tags and `<script>`/`<style>` blocks
+  removed, entities unescaped (including double-encoded markup), whitespace collapsed.
+  What lands in `articles.content` and in stdout is always plain text.
 
 ## Failure handling
 

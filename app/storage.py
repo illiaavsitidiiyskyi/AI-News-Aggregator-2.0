@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db_models import Article, Source, utcnow
 from app.models import NewsItem, compute_hash
+from app.normalization import clean_html, normalize_datetime, normalize_text
 
 #: Consecutive failures after which a source is deactivated.
 MAX_FAILURES_BEFORE_INACTIVE = 5
@@ -49,6 +50,18 @@ def active_sources(session: Session) -> list[Source]:
     return list(session.scalars(select(Source).where(Source.is_active.is_(True))))
 
 
+def _row_from_item(item: NewsItem, source_id: int) -> dict:
+    """Map a NewsItem to an Article row, normalizing text and dates on the way in."""
+    return {
+        "title": normalize_text(item.title)[:500],
+        "url": normalize_text(item.url)[:1000],
+        "content": clean_html(item.summary),
+        "published_at": normalize_datetime(item.published_at),
+        "hash": compute_hash(item.url),
+        "source_id": source_id,
+    }
+
+
 def save_items(session: Session, items: list[NewsItem]) -> int:
     """Insert items, resolving sources and skipping duplicates by URL/hash.
 
@@ -59,14 +72,7 @@ def save_items(session: Session, items: list[NewsItem]) -> int:
         if not item.url:
             continue
         source = get_or_create_source(session, item.source)
-        article = Article(
-            title=item.title[:500],
-            url=item.url[:1000],
-            content=item.summary,
-            published_at=item.published_at,
-            hash=compute_hash(item.url),
-            source_id=source.id,
-        )
+        article = Article(**_row_from_item(item, source.id))
         session.add(article)
         try:
             session.flush()
@@ -84,16 +90,7 @@ def save_items_upsert(session: Session, items: list[NewsItem]) -> int:
         if not item.url:
             continue
         source = get_or_create_source(session, item.source)
-        rows.append(
-            {
-                "title": item.title[:500],
-                "url": item.url[:1000],
-                "content": item.summary,
-                "published_at": item.published_at,
-                "hash": compute_hash(item.url),
-                "source_id": source.id,
-            }
-        )
+        rows.append(_row_from_item(item, source.id))
     if not rows:
         return 0
     stmt = (

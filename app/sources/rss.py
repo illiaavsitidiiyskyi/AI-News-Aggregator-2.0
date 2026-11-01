@@ -14,6 +14,7 @@ import feedparser
 import requests
 
 from app.models import NewsItem
+from app.normalization import clean_html, normalize_datetime, normalize_text
 from app.sources.base import NewsSource
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,11 @@ class FeedParseError(FeedError):
 
 
 def _entry_datetime(entry: Any) -> datetime | None:
+    """Publication datetime as aware UTC (feedparser's struct_time is already UTC)."""
     parsed: struct_time | None = entry.get("published_parsed") or entry.get("updated_parsed")
     if parsed is None:
         return None
-    return datetime(*parsed[:6], tzinfo=timezone.utc)
+    return normalize_datetime(datetime(*parsed[:6], tzinfo=timezone.utc))
 
 
 class RssSource(NewsSource):
@@ -86,14 +88,14 @@ class RssSource(NewsSource):
             # Prefer the feed's own title (human-readable) for storage/reporting.
             feed_title = feed.feed.get("title")
             if feed_title:
-                self.name = str(feed_title)
+                self.name = normalize_text(feed_title)
         for entry in feed.entries[:limit]:
             yield NewsItem(
-                title=entry.get("title", ""),
-                url=entry.get("link", ""),
+                title=normalize_text(entry.get("title", "")),
+                url=normalize_text(entry.get("link", "")),
                 source=self.name,
                 published_at=_entry_datetime(entry),
-                summary=entry.get("summary", ""),
+                summary=clean_html(entry.get("summary", "")),
             )
 
     def _download(self) -> bytes:

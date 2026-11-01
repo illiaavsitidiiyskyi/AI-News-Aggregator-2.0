@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
-from datetime import timezone
 
 from app.config import Config
 from app.models import NewsItem
+from app.normalization import normalize_datetime
 from app.sources.base import NewsSource
 
 logger = logging.getLogger(__name__)
@@ -71,11 +71,10 @@ def _sort_key(item: NewsItem) -> tuple[int, float]:
     """Sort key handling missing and naive/aware datetimes uniformly.
 
     Used with ``reverse=True``: dated items come first (newest first),
-    items without a date go last.
+    items without a date go last. ``normalize_datetime`` makes naive values
+    UTC-aware so timestamps compare correctly.
     """
-    dt = item.published_at
+    dt = normalize_datetime(item.published_at)
     if dt is None:
         return (0, 0.0)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
     return (1, dt.timestamp())

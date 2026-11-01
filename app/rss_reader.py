@@ -12,14 +12,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
-from html import unescape
 from typing import TextIO
 
 from app.config import Config
 from app.db import get_session_factory
 from app.models import NewsItem
+from app.normalization import clean_html, normalize_datetime
 from app.sources.base import NewsSource
 from app.sources.rss import RssSource
 from app.storage import (
@@ -33,27 +32,17 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FEED_URL = "https://huggingface.co/blog/feed.xml"
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_WS_RE = re.compile(r"\s+")
-_SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([,.;:!?])")
-
-
-def _strip_html(text: str) -> str:
-    """Remove HTML tags and collapse whitespace for plain-text output."""
-    plain = _WS_RE.sub(" ", unescape(_TAG_RE.sub(" ", text))).strip()
-    return _SPACE_BEFORE_PUNCT_RE.sub(r"\1", plain)
-
 
 def format_article(item: NewsItem, index: int) -> str:
     """Render one article as a plain-text block."""
-    dt = item.published_at
+    dt = normalize_datetime(item.published_at)
     published = dt.strftime("%Y-%m-%d %H:%M") if dt else "unknown date"
     lines = [
         f"{index}. {item.title or '(no title)'}",
         f"   {item.url}" if item.url else "   (no link)",
         f"   {published}",
     ]
-    summary = _strip_html(item.summary)
+    summary = clean_html(item.summary)
     if summary:
         lines.append(f"   {summary}")
     return "\n".join(lines)
