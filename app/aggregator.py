@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import timezone
 
 from app.config import Config
@@ -12,23 +12,45 @@ from app.sources.base import NewsSource
 
 logger = logging.getLogger(__name__)
 
+#: Called after each source fetch: (source, fetched item count, error or None).
+SourceResultHook = Callable[[NewsSource, int, Exception | None], None]
+
 
 class Aggregator:
     """Coordinates fetching and merging news from multiple sources."""
 
-    def __init__(self, sources: Iterable[NewsSource], config: Config | None = None) -> None:
+    def __init__(
+        self,
+        sources: Iterable[NewsSource],
+        config: Config | None = None,
+        on_source_result: SourceResultHook | None = None,
+    ) -> None:
         self.sources = list(sources)
         self.config = config or Config()
+        self.on_source_result = on_source_result
 
     def collect(self) -> list[NewsItem]:
         """Fetch all sources, deduplicate by URL and return items newest first."""
         items: list[NewsItem] = []
         for source in self.sources:
             try:
-                items.extend(source.fetch(limit=self.config.max_items_per_source))
-            except Exception:
+                fetched = list(source.fetch(limit=self.config.max_items_per_source))
+            except Exception as exc:
                 logger.exception("Failed to fetch from source %s", source.name)
+                self._notify(source, 0, exc)
+            else:
+                items.extend(fetched)
+                self._notify(source, len(fetched), None)
         return self._deduplicate(items)
+
+    def _notify(self, source: NewsSource, count: int, error: Exception | None) -> None:
+        if self.on_source_result is None:
+            return
+        try:
+            self.on_source_result(source, count, error)
+        except Exception:
+            # Status recording must never break the collection pipeline.
+            logger.exception("on_source_result hook failed for source %s", source.name)
 
     @staticmethod
     def _deduplicate(items: Iterable[NewsItem]) -> list[NewsItem]:

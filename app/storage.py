@@ -6,8 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, joinedload
 
-from app.db_models import Article, Source
+from app.db_models import Article, Source, utcnow
 from app.models import NewsItem, compute_hash
+
+#: Consecutive failures after which a source is deactivated.
+MAX_FAILURES_BEFORE_INACTIVE = 5
+#: Cap for stored error messages.
+MAX_ERROR_LENGTH = 1000
 
 
 def get_or_create_source(session: Session, name: str, url: str | None = None) -> Source:
@@ -18,6 +23,30 @@ def get_or_create_source(session: Session, name: str, url: str | None = None) ->
         session.add(source)
         session.flush()
     return source
+
+
+def record_fetch_success(session: Session, source: Source) -> None:
+    """Mark a source as successfully fetched: stamp time, clear errors, reactivate."""
+    source.last_fetched_at = utcnow()
+    source.last_error = None
+    source.failure_count = 0
+    source.is_active = True
+
+
+def record_fetch_failure(
+    session: Session, source: Source, error: str, max_failures: int = MAX_FAILURES_BEFORE_INACTIVE
+) -> None:
+    """Record a fetch failure; deactivate the source after ``max_failures`` in a row."""
+    source.last_error = error[:MAX_ERROR_LENGTH]
+    # Column defaults only apply at INSERT; treat a pre-flush object as fresh.
+    source.failure_count = (source.failure_count or 0) + 1
+    if source.failure_count >= max_failures:
+        source.is_active = False
+
+
+def active_sources(session: Session) -> list[Source]:
+    """Return all sources the aggregator should fetch from."""
+    return list(session.scalars(select(Source).where(Source.is_active.is_(True))))
 
 
 def save_items(session: Session, items: list[NewsItem]) -> int:

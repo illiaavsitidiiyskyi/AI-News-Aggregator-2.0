@@ -26,6 +26,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── test_aggregator.py
 │   ├── test_api.py
 │   ├── test_config.py
+│   ├── test_failure_handling.py
 │   ├── test_rss_reader.py
 │   └── test_storage.py
 ├── alembic/               # Migrations (versions/, env.py)
@@ -111,6 +112,23 @@ Environment variables (or a `.env` file in the project root):
 | `MAX_ITEMS_PER_SOURCE` | `50` | Max items fetched per source |
 | `OUTPUT_FORMAT` | `json` | Output format (planned) |
 | `DATABASE_URL` | `postgresql+psycopg://aggregator:aggregator@127.0.0.1:5432/aggregator` | SQLAlchemy database URL |
+| `FEED_TIMEOUT_SECONDS` | `10` | Feed download timeout |
+| `FEED_RETRIES` | `3` | Total attempts per feed fetch (1 = no retries) |
+| `FEED_RETRY_BACKOFF_SECONDS` | `1.0` | Base delay for exponential backoff between retries |
+
+## Failure handling
+
+- **Timeouts & retries**: feed downloads use a configurable timeout and are retried with
+  exponential backoff (`FEED_RETRIES` / `FEED_RETRY_BACKOFF_SECONDS`). HTTP 4xx errors are
+  not retried; 429/5xx and network errors are.
+- **Broken feeds**: unrecoverably malformed XML raises `FeedParseError` (`app/sources/rss.py`);
+  partially broken feeds that still yield entries are logged as warnings and processed.
+- **Source status**: each fetch outcome is recorded on the source row —
+  `last_fetched_at`, `last_error`, `failure_count`, `is_active`. A source is deactivated
+  (`is_active = false`) after 5 consecutive failures and skipped by the aggregator until
+  it is manually re-enabled; a successful fetch resets the counters and reactivates it.
+- **Logging**: fetch retries, per-source results and failures are logged; the aggregation
+  loop survives a failed cycle and retries on the next interval.
 
 ## Database
 
@@ -149,11 +167,15 @@ id          PK              id           PK
 name        unique          url          unique
 url                         title
 created_at                  content      (text)
-                            published_at nullable
-                            hash         sha256(normalized url), unique, indexed
-                            source_id    FK → sources.id
-                            created_at
+last_fetched_at nullable    published_at nullable
+last_error   nullable       hash         sha256(normalized url), unique, indexed
+failure_count (int)         source_id    FK → sources.id
+is_active    (bool)         created_at
 ```
+
+Fetch-status columns on `sources`: `last_fetched_at` / `last_error` track the latest
+fetch outcome, `failure_count` counts consecutive failures and `is_active` marks sources
+the aggregator should skip (see Failure handling).
 
 Deduplication is based on `hash` — the sha256 of the normalized URL (lowercased scheme/host,
 fragment and trailing slash stripped), so cosmetic URL variants collapse into one article.

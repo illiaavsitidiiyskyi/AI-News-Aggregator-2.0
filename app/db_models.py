@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -25,11 +25,21 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
+    #: Fetch-status fields (failure handling).
+    last_fetched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Last fetch/parse error message, cleared on the next successful fetch.
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Consecutive failures; reset to 0 on success. Used to flip ``is_active``.
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Inactive sources are skipped by the aggregator until manually re-enabled.
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     articles: Mapped[list[Article]] = relationship(back_populates="source")
 
     def __repr__(self) -> str:
-        return f"<Source {self.name}>"
+        return f"<Source {self.name} active={self.is_active}>"
 
 
 class Article(Base):
