@@ -11,7 +11,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 │   ├── config.py          # Configuration (env-driven)
 │   ├── models.py          # NewsItem domain model, dedup keys (URL + content hash)
 │   ├── normalization.py   # Date/encoding normalization, HTML → plain text
-│   ├── aggregator.py      # Fetch → dedupe → sort pipeline
+│   ├── aggregator.py      # Fetch → dedupe (URL + fuzzy titles) → sort pipeline
 │   ├── api.py             # FastAPI app (GET /health, GET /news)
 │   ├── db.py              # SQLAlchemy engine/session/Base
 │   ├── db_models.py       # ORM models: Source, Article
@@ -146,6 +146,30 @@ defensively on save (`app/storage.py`):
 - **Logging**: fetch retries, per-source results and failures are logged; the aggregation
   loop survives a failed cycle and retries on the next interval.
 
+## Deduplication
+
+Three layers, from exact to fuzzy:
+
+1. **Normalized URL** — `articles.normalized_url` (lowercased scheme/host, fragment
+   and trailing slash stripped) with a unique index: cosmetic URL variants collapse
+   into one article.
+2. **Content hash** — `articles.content_hash` = sha256(title + content) with a unique
+   index: catches the same material syndicated under a different URL. NULL when
+   content is empty — a title alone is too weak a signal (generic titles collide
+   across different articles), so such items are deduplicated by URL only; NULLs
+   never conflict in a unique index.
+3. **Fuzzy titles** — `titles_similar()` (`app/models.py`), applied by the aggregator
+   in memory before anything is saved: titles are tokenized (casefolded, split on
+   punctuation, words kept whole) and compared by Jaccard similarity
+   (`TITLE_SIMILARITY_THRESHOLD = 0.65`), so word order, casing and a trailing
+   `| Publisher` suffix do not matter. Titles with different numbers are never
+   similar (`GPT-5` vs `GPT-5.2`, `Top 10` vs `Top 5`), nor are empty ones.
+   Similarity is not transitive, so it cannot be a unique index — the database
+   enforces the exact keys, the aggregator applies the fuzzy one.
+
+The first two keys make the DB the authority on duplicates; the third collapses
+similar titles across sources within a collection run.
+
 ## Database
 
 PostgreSQL for local development (SQLAlchemy 2.0 + psycopg 3):
@@ -194,16 +218,6 @@ is_active    (bool)         source_id       FK → sources.id
 Fetch-status columns on `sources`: `last_fetched_at` / `last_error` track the latest
 fetch outcome, `failure_count` counts consecutive failures and `is_active` marks sources
 the aggregator should skip (see Failure handling).
-
-Deduplication runs on two keys, both enforced by unique indexes in the database
-(the DB, not the application, is the authority on duplicates):
-
-- **`normalized_url`** — the URL normalized on save (lowercased scheme/host, fragment
-  and trailing slash stripped): cosmetic URL variants collapse into one article.
-- **`content_hash`** — sha256 of title + content: catches the same material syndicated
-  under a different URL. It is NULL when content is empty — a title alone is too weak
-  a signal (generic titles collide across different articles), so such items are
-  deduplicated by URL only; NULLs never conflict in a unique index.
 
 ## Tests
 

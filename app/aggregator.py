@@ -1,4 +1,4 @@
-"""Aggregation pipeline: fetch from sources, deduplicate, sort."""
+"""Aggregation pipeline: fetch from sources, deduplicate (URL + fuzzy titles), sort."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable, Iterable
 
 from app.config import Config
-from app.models import NewsItem
+from app.models import NewsItem, titles_similar
 from app.normalization import normalize_datetime
 from app.sources.base import NewsSource
 
@@ -30,7 +30,7 @@ class Aggregator:
         self.on_source_result = on_source_result
 
     def collect(self) -> list[NewsItem]:
-        """Fetch all sources, deduplicate by URL and return items newest first."""
+        """Fetch all sources, deduplicate (exact URL, fuzzy title) and return items newest first."""
         items: list[NewsItem] = []
         for source in self.sources:
             try:
@@ -54,13 +54,24 @@ class Aggregator:
 
     @staticmethod
     def _deduplicate(items: Iterable[NewsItem]) -> list[NewsItem]:
-        seen: set[str] = set()
+        """Drop repeat URLs and near-identical titles; keep the rest newest first.
+
+        Exact URL equality first (cheap), then fuzzy title comparison
+        (``titles_similar``) so the same story published by different sources
+        under different URLs collapses into one item — the first occurrence
+        wins. Items without a URL skip the URL check but still go through the
+        title check. Pairwise comparison is O(n²) over a per-run batch, which
+        stays small (sources × max_items_per_source).
+        """
+        seen_urls: set[str] = set()
         unique: list[NewsItem] = []
         for item in items:
             if item.url:
-                if item.url in seen:
+                if item.url in seen_urls:
                     continue
-                seen.add(item.url)
+                seen_urls.add(item.url)
+            if any(titles_similar(item.title, kept.title) for kept in unique):
+                continue
             unique.append(item)
         # Newest first; items without a date go last.
         unique.sort(key=_sort_key, reverse=True)
