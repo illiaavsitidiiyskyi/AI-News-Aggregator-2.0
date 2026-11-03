@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db_models import Article, Source, utcnow
-from app.models import NewsItem, compute_hash
+from app.models import NewsItem, normalize_url
 from app.normalization import clean_html, normalize_datetime, normalize_text
 
 #: Consecutive failures after which a source is deactivated.
@@ -51,21 +52,24 @@ def active_sources(session: Session) -> list[Source]:
 
 
 def _row_from_item(item: NewsItem, source_id: int) -> dict:
-    """Map a NewsItem to an Article row, normalizing text and dates on the way in."""
+    """Map a NewsItem to an Article row, normalizing text, dates and the URL key."""
+    url = normalize_text(item.url)
     return {
         "title": normalize_text(item.title)[:500],
-        "url": normalize_text(item.url)[:1000],
+        "url": url[:1000],
+        "normalized_url": normalize_url(url)[:1000],
         "content": clean_html(item.summary),
         "published_at": normalize_datetime(item.published_at),
-        "hash": compute_hash(item.url),
         "source_id": source_id,
     }
 
 
 def save_items(session: Session, items: list[NewsItem]) -> int:
-    """Insert items, resolving sources and skipping duplicates by URL/hash.
+    """Insert items, resolving sources and skipping duplicates by normalized URL.
 
-    Returns the number of new rows.
+    Each insert runs in its own savepoint: a duplicate (unique violation on
+    ``articles.normalized_url``) skips only that item and never rolls back
+    rows already added in this batch. Returns the number of new rows.
     """
     new_count = 0
     for item in items:
@@ -73,18 +77,19 @@ def save_items(session: Session, items: list[NewsItem]) -> int:
             continue
         source = get_or_create_source(session, item.source)
         article = Article(**_row_from_item(item, source.id))
-        session.add(article)
         try:
-            session.flush()
+            with session.begin_nested():
+                session.add(article)
+                session.flush()
             new_count += 1
-        except Exception:
-            # Unique violation (duplicate URL/hash) or transient DB error: skip item.
-            session.rollback()
+        except IntegrityError:
+            # Duplicate normalized_url: the article is already stored.
+            pass
     return new_count
 
 
 def save_items_upsert(session: Session, items: list[NewsItem]) -> int:
-    """Insert items with ON CONFLICT (hash) DO NOTHING. Returns the number of new rows."""
+    """Insert items with ON CONFLICT (normalized_url) DO NOTHING. Returns the number of new rows."""
     rows = []
     for item in items:
         if not item.url:
@@ -96,7 +101,7 @@ def save_items_upsert(session: Session, items: list[NewsItem]) -> int:
     stmt = (
         pg_insert(Article)
         .values(rows)
-        .on_conflict_do_nothing(index_elements=["hash"])
+        .on_conflict_do_nothing(index_elements=["normalized_url"])
         .returning(Article.id)
     )
     # RETURNING gives an accurate count; rowcount is unreliable for ON CONFLICT DO NOTHING.

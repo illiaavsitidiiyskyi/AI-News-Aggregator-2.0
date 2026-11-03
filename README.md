@@ -9,7 +9,7 @@ Aggregates AI-related news from multiple sources (RSS/Atom feeds, APIs), dedupli
 ├── app/
 │   ├── __init__.py
 │   ├── config.py          # Configuration (env-driven)
-│   ├── models.py          # NewsItem domain model, URL normalization + hashing
+│   ├── models.py          # NewsItem domain model, URL normalization (dedup key)
 │   ├── normalization.py   # Date/encoding normalization, HTML → plain text
 │   ├── aggregator.py      # Fetch → dedupe → sort pipeline
 │   ├── api.py             # FastAPI app (GET /health, GET /news)
@@ -67,7 +67,7 @@ news-aggregator
 `app/rss_reader.py` is a standalone service that reads one RSS/Atom feed via `feedparser`,
 prints its articles to stdout and saves them to the database: the feed is registered in the
 `sources` table (name = feed title, url = feed URL), each article in `articles`
-(deduplicated by URL hash).
+(deduplicated by normalized URL).
 
 ```bash
 python -m app.rss_reader                              # default Hugging Face blog feed
@@ -171,21 +171,22 @@ alembic current                                        # show current revision
 For tests, tables are created directly from the models (`init_db()` in `tests/conftest.py`);
 Alembic is used for the dev/prod database.
 
-`app/storage.py` provides `save_items` (per-item insert, resolves sources, skips duplicates by
-URL/hash) and `save_items_upsert` (single `INSERT ... ON CONFLICT (hash) DO NOTHING`).
+`app/storage.py` provides `save_items` (per-item insert in a savepoint, resolves sources,
+skips duplicates by normalized URL) and `save_items_upsert` (single
+`INSERT ... ON CONFLICT (normalized_url) DO NOTHING`).
 
 ## Data model
 
 ```
 sources                     articles
 ----                        --------
-id          PK              id           PK
-name        unique          url          unique
-url                         title
-created_at                  content      (text)
-last_fetched_at nullable    published_at nullable
-last_error   nullable       hash         sha256(normalized url), unique, indexed
-failure_count (int)         source_id    FK → sources.id
+id          PK              id              PK
+name        unique          url             as fetched
+url                         normalized_url  unique index (dedup key)
+created_at                  title
+last_fetched_at nullable    content         (text)
+last_error   nullable       published_at    nullable
+failure_count (int)         source_id       FK → sources.id
 is_active    (bool)         created_at
 ```
 
@@ -193,8 +194,10 @@ Fetch-status columns on `sources`: `last_fetched_at` / `last_error` track the la
 fetch outcome, `failure_count` counts consecutive failures and `is_active` marks sources
 the aggregator should skip (see Failure handling).
 
-Deduplication is based on `hash` — the sha256 of the normalized URL (lowercased scheme/host,
-fragment and trailing slash stripped), so cosmetic URL variants collapse into one article.
+Deduplication is based on `normalized_url` — the URL normalized on save (lowercased
+scheme/host, fragment and trailing slash stripped), so cosmetic URL variants collapse
+into one article. A unique index (`uq_articles_normalized_url`) enforces this in the
+database itself: the DB, not the application, is the authority on duplicates.
 
 ## Tests
 

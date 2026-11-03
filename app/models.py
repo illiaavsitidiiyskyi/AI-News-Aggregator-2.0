@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
@@ -21,12 +20,11 @@ class NewsItem:
 
 
 def normalize_url(url: str) -> str:
-    """Normalize a URL for dedup: lowercase scheme/host, drop fragment and trailing slash."""
+    """Normalize a URL for dedup: lowercase scheme/host, drop fragment and trailing slash.
+
+    The result is stored in ``articles.normalized_url`` and guarded by a unique
+    index, so it is the canonical dedup key across sources.
+    """
     parts = urlsplit(url.strip())
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
-
-
-def compute_hash(url: str) -> str:
-    """sha256 hex digest of the normalized URL — dedup key stored on Article.hash."""
-    return hashlib.sha256(normalize_url(url).encode("utf-8")).hexdigest()

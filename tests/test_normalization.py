@@ -158,6 +158,7 @@ def test_storage_normalizes_on_save(db_session) -> None:
     article = db_session.scalar(select(Article))
     assert article.title == "Padded title"
     assert article.url == "https://example.com/x"
+    assert article.normalized_url == "https://example.com/x"
     assert article.content == "Body text & more"
     # SQLite drops tzinfo on read-back; normalize before comparing.
     assert normalize_datetime(article.published_at) == datetime(2026, 10, 31, 12, 0, tzinfo=UTC)

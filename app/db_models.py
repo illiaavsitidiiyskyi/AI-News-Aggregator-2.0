@@ -46,18 +46,17 @@ class Article(Base):
     """A single aggregated news article (table ``articles``)."""
 
     __tablename__ = "articles"
-    __table_args__ = (
-        UniqueConstraint("url", name="uq_articles_url"),
-        UniqueConstraint("hash", name="uq_articles_hash"),
-    )
+    __table_args__ = (UniqueConstraint("normalized_url", name="uq_articles_normalized_url"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: URL as fetched (cosmetic variants are kept verbatim).
     url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    #: Normalized URL (lowercased scheme/host, fragment and trailing slash dropped) —
+    #: the dedup key; the unique index below makes the DB the authority on duplicates.
+    normalized_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    #: sha256 hex of the normalized URL — dedup key across sources.
-    hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_id: Mapped[int] = mapped_column(
         ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True
     )
