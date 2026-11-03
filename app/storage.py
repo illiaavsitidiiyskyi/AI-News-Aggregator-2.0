@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db_models import Article, Source, utcnow
-from app.models import NewsItem, normalize_url
+from app.models import NewsItem, compute_content_hash, normalize_url
 from app.normalization import clean_html, normalize_datetime, normalize_text
 
 #: Consecutive failures after which a source is deactivated.
@@ -52,24 +52,30 @@ def active_sources(session: Session) -> list[Source]:
 
 
 def _row_from_item(item: NewsItem, source_id: int) -> dict:
-    """Map a NewsItem to an Article row, normalizing text, dates and the URL key."""
+    """Map a NewsItem to an Article row, normalizing text, dates and the dedup keys."""
     url = normalize_text(item.url)
+    title = normalize_text(item.title)[:500]
+    content = clean_html(item.summary)
     return {
-        "title": normalize_text(item.title)[:500],
+        "title": title,
         "url": url[:1000],
         "normalized_url": normalize_url(url)[:1000],
-        "content": clean_html(item.summary),
+        "content": content,
+        # Hash what is actually stored, so the key always matches the row.
+        "content_hash": compute_content_hash(title, content),
         "published_at": normalize_datetime(item.published_at),
         "source_id": source_id,
     }
 
 
 def save_items(session: Session, items: list[NewsItem]) -> int:
-    """Insert items, resolving sources and skipping duplicates by normalized URL.
+    """Insert items, resolving sources and skipping duplicates.
 
-    Each insert runs in its own savepoint: a duplicate (unique violation on
-    ``articles.normalized_url``) skips only that item and never rolls back
-    rows already added in this batch. Returns the number of new rows.
+    Duplicates are decided by the DB via unique constraints: ``normalized_url``
+    (same link, cosmetic variants) and ``content_hash`` (same material under a
+    different link). Each insert runs in its own savepoint, so a duplicate
+    skips only that item and never rolls back rows already added in this batch.
+    Returns the number of new rows.
     """
     new_count = 0
     for item in items:
@@ -83,13 +89,18 @@ def save_items(session: Session, items: list[NewsItem]) -> int:
                 session.flush()
             new_count += 1
         except IntegrityError:
-            # Duplicate normalized_url: the article is already stored.
+            # Duplicate normalized_url or content_hash: the article is already stored.
             pass
     return new_count
 
 
 def save_items_upsert(session: Session, items: list[NewsItem]) -> int:
-    """Insert items with ON CONFLICT (normalized_url) DO NOTHING. Returns the number of new rows."""
+    """Insert items with ON CONFLICT DO NOTHING. Returns the number of new rows.
+
+    No conflict target is given on purpose: there are two unique keys
+    (``normalized_url``, ``content_hash``) and PostgreSQL allows a single
+    conflict clause per INSERT — an untargeted one covers both.
+    """
     rows = []
     for item in items:
         if not item.url:
@@ -98,12 +109,7 @@ def save_items_upsert(session: Session, items: list[NewsItem]) -> int:
         rows.append(_row_from_item(item, source.id))
     if not rows:
         return 0
-    stmt = (
-        pg_insert(Article)
-        .values(rows)
-        .on_conflict_do_nothing(index_elements=["normalized_url"])
-        .returning(Article.id)
-    )
+    stmt = pg_insert(Article).values(rows).on_conflict_do_nothing().returning(Article.id)
     # RETURNING gives an accurate count; rowcount is unreliable for ON CONFLICT DO NOTHING.
     return len(session.execute(stmt).fetchall())
 

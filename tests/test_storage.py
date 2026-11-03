@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, inspect, select
 
 from app.db_models import Article, Source
-from app.models import NewsItem, normalize_url
+from app.models import NewsItem, compute_content_hash, normalize_url
 from app.storage import get_or_create_source, list_items, save_items
 
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
@@ -83,6 +83,51 @@ def test_normalized_url_has_unique_index(db_session) -> None:
     assert any(c["name"] == "uq_articles_normalized_url" for c in constraints)
 
 
+def test_save_dedupes_by_content_hash_across_urls(db_session) -> None:
+    # Same material syndicated under a different URL: the URL key cannot see
+    # it, but title+content collides.
+    first = NewsItem(
+        title="Big news", url="http://a/1", source="s1", summary="<p>Identical body</p>"
+    )
+    second = NewsItem(title="Big news", url="http://b/2", source="s2", summary="Identical body")
+    assert save_items(db_session, [first]) == 1
+    db_session.commit()
+    assert save_items(db_session, [second]) == 0
+    db_session.commit()
+    assert len(list_items(db_session)) == 1
+
+
+def test_save_keeps_articles_sharing_title_without_content(db_session) -> None:
+    # Empty content -> no content dedup: a title alone is too weak a signal.
+    items = [
+        NewsItem(title="Weekly roundup", url="http://a/1", source="s1"),
+        NewsItem(title="Weekly roundup", url="http://b/2", source="s2"),
+    ]
+    assert save_items(db_session, items) == 2
+    db_session.commit()
+    assert len(list_items(db_session)) == 2
+
+
+def test_content_hash_is_stored_or_null(db_session) -> None:
+    save_items(
+        db_session,
+        [
+            NewsItem(title="with body", url="http://a/1", source="s", summary="text"),
+            NewsItem(title="no body", url="http://a/2", source="s"),
+        ],
+    )
+    db_session.commit()
+    with_body = db_session.scalar(select(Article).where(Article.title == "with body"))
+    no_body = db_session.scalar(select(Article).where(Article.title == "no body"))
+    assert with_body.content_hash == compute_content_hash("with body", "text")
+    assert no_body.content_hash is None
+
+
+def test_content_hash_has_unique_index(db_session) -> None:
+    constraints = inspect(db_session.bind).get_unique_constraints("articles")
+    assert any(c["name"] == "uq_articles_content_hash" for c in constraints)
+
+
 def test_save_ignores_items_without_url(db_session) -> None:
     assert save_items(db_session, [_item("no-url", "")]) == 0
     db_session.commit()
@@ -104,3 +149,12 @@ def test_normalize_url() -> None:
 def test_normalize_url_is_stable_and_distinct() -> None:
     assert normalize_url("https://example.com/post/") == normalize_url("https://example.com/post")
     assert normalize_url("https://example.com/a") != normalize_url("https://example.com/b")
+
+
+def test_compute_content_hash_stable_and_guarded() -> None:
+    assert compute_content_hash("a", "body") == compute_content_hash("  a ", " body ")
+    assert compute_content_hash("a", "body1") != compute_content_hash("a", "body2")
+    assert compute_content_hash("a", "body") != compute_content_hash("b", "body")
+    # No content -> no content key (NULL never conflicts in a unique index).
+    assert compute_content_hash("a", "") is None
+    assert compute_content_hash("", "") is None

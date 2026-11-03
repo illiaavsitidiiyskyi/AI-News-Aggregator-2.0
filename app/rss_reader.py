@@ -1,8 +1,9 @@
 """Read a single RSS/Atom feed via feedparser, print its articles and save them to the DB.
 
 The feed itself is registered in the ``sources`` table (name = feed title, url = feed URL),
-each article is stored in ``articles`` and deduplicated by normalized URL (unique index).
-Fetch outcomes are tracked on the source: ``last_fetched_at`` / ``last_error`` / ``is_active``.
+each article is stored in ``articles`` and deduplicated by normalized URL and content hash
+(unique indexes). Fetch outcomes are tracked on the source: ``last_fetched_at`` /
+``last_error`` / ``is_active``.
 
 Usage:
     python -m app.rss_reader [FEED_URL] [--limit N] [--no-save]
